@@ -337,7 +337,7 @@ lines:
 
 		lyrics, err := parseLyricsfile("ja", content)
 		Expect(err).ToNot(HaveOccurred())
-		Expect(lyrics).To(HaveLen(1))
+		Expect(lyrics).To(HaveLen(3))
 	})
 
 	It("decodes legacy v1.0 documents without transliteration fields", func() {
@@ -368,5 +368,111 @@ lines:
 		lyrics, err := parseLyricsfile("eng", []byte(input))
 		Expect(err).ToNot(HaveOccurred())
 		Expect(lyrics).To(HaveLen(1))
+	})
+
+	It("appends one pronunciation track per declared transliteration system", func() {
+		content, err := os.ReadFile("model/testdata/ja_transliteration.lyricsfile")
+		Expect(err).ToNot(HaveOccurred())
+
+		lyrics, err := parseLyricsfile("ja", content)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(lyrics).To(HaveLen(3))
+
+		main := lyrics[0]
+		Expect(main.Kind).To(Equal("main"))
+		Expect(main.Lang).To(Equal("ja"))
+		Expect(main.Synced).To(BeTrue())
+
+		hira := lyrics[1]
+		Expect(hira.Kind).To(Equal(LyricKindPronunciation))
+		Expect(hira.Lang).To(Equal("ja-hrkt"))
+		Expect(hira.Synced).To(BeTrue())
+
+		romaji := lyrics[2]
+		Expect(romaji.Kind).To(Equal(LyricKindPronunciation))
+		Expect(romaji.Lang).To(Equal("ja-latn"))
+		Expect(romaji.Synced).To(BeTrue())
+
+		Expect(hira.Line).To(HaveLen(len(main.Line)))
+		Expect(romaji.Line).To(HaveLen(len(main.Line)))
+
+		Expect(hira.Line[0].Value).To(Equal("きょうはてんきがいい"))
+		Expect(romaji.Line[0].Value).To(Equal("kyō wa tenki ga ii"))
+		Expect(hira.Line[1].Value).To(BeEmpty())
+
+		Expect(hira.Line[0].Cue).To(HaveLen(2))
+		Expect(hira.Line[0].Cue[0].Value).To(Equal("きょう"))
+		Expect(hira.Line[0].Cue[1].Value).To(Equal("てんき"))
+		Expect(hira.Line[0].Cue[0].ByteStart).To(Equal(0))
+		Expect(hira.Line[0].Cue[0].ByteEnd).To(Equal(len("きょう") - 1))
+
+		Expect(romaji.Line[0].Cue).To(HaveLen(5))
+		Expect(romaji.Line[0].Cue[0].Value).To(Equal("kyō"))
+		Expect(romaji.Line[0].Cue[0].ByteStart).To(Equal(0))
+		Expect(romaji.Line[0].Cue[0].ByteEnd).To(Equal(len("kyō") - 1))
+
+		// Shared timestamps: hira cue[1] (てんき) maps to the 3rd main word (天気),
+		// proving inheritance follows the word→cue mapping, not positional order.
+		Expect(hira.Line[0].Cue[0].Start).To(Equal(main.Line[0].Cue[0].Start))
+		Expect(hira.Line[0].Cue[0].End).To(Equal(main.Line[0].Cue[0].End))
+		Expect(hira.Line[0].Cue[1].Start).To(Equal(main.Line[0].Cue[2].Start))
+		Expect(hira.Line[0].Cue[1].End).To(Equal(main.Line[0].Cue[2].End))
+		for i := range romaji.Line[0].Cue {
+			Expect(romaji.Line[0].Cue[i].Start).To(Equal(main.Line[0].Cue[i].Start))
+			Expect(romaji.Line[0].Cue[i].End).To(Equal(main.Line[0].Cue[i].End))
+		}
+
+		Expect(hira.Line[2].Start).To(Equal(main.Line[2].Start))
+		Expect(hira.Line[2].End).To(Equal(main.Line[2].End))
+
+		// Sparse: 飛ぶ carries no reading, so neither track emits a cue for it.
+		Expect(hira.Line[2].Cue).To(HaveLen(1))
+		Expect(hira.Line[2].Cue[0].Value).To(Equal("そら"))
+		Expect(romaji.Line[2].Cue).To(HaveLen(2))
+		Expect(romaji.Line[2].Cue[0].Value).To(Equal("sora"))
+		Expect(romaji.Line[2].Cue[1].Value).To(Equal("o"))
+	})
+
+	It("emits only the main track when no transliteration system is declared", func() {
+		input := `version: '1.0'
+metadata:
+  title: 'No Transliteration'
+  language: 'ja'
+lines:
+  - text: "今日"
+    start_ms: 1000
+    end_ms: 2000
+    words:
+      - text: "今日"
+        start_ms: 1000
+        end_ms: 2000
+`
+		lyrics, err := parseLyricsfile("ja", []byte(input))
+		Expect(err).ToNot(HaveOccurred())
+		Expect(lyrics).To(HaveLen(1))
+		Expect(lyrics[0].Kind).To(Equal("main"))
+	})
+
+	It("skips a declared transliteration system that has no readings anywhere", func() {
+		input := `version: '1.0'
+metadata:
+  title: 'Declared But Empty'
+  language: 'ja'
+  transliterations:
+    - id: hira
+      system: 'ja-Hrkt'
+lines:
+  - text: "今日"
+    start_ms: 1000
+    end_ms: 2000
+    words:
+      - text: "今日"
+        start_ms: 1000
+        end_ms: 2000
+`
+		lyrics, err := parseLyricsfile("ja", []byte(input))
+		Expect(err).ToNot(HaveOccurred())
+		Expect(lyrics).To(HaveLen(1))
+		Expect(lyrics[0].Kind).To(Equal("main"))
 	})
 })

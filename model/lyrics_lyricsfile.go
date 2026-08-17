@@ -66,7 +66,13 @@ func parseLyricsfile(lang string, contents []byte) (LyricList, error) {
 	lyrics.Line = lines
 	lyrics.Agents = agents
 	lyrics.Synced = true
-	return LyricList{normalizeLyrics(lyrics)}, nil
+
+	// Normalize the main track before deriving pronunciations: their cues inherit
+	// its resolved Start/End, so reordering would break shared timestamps.
+	mainLyrics := normalizeLyrics(lyrics)
+	result := LyricList{mainLyrics}
+	result = append(result, buildLyricsfilePronunciations(doc, mainLyrics)...)
+	return result, nil
 }
 
 const lyricsfileVersion = "1.0"
@@ -288,4 +294,70 @@ func wordsToLineCues(entry lyricsfileLineEntry, agentID string) ([]Cue, string) 
 		}
 	}
 	return cues, lineValue
+}
+
+// buildLyricsfilePronunciations derives one pronunciation-kind Lyrics per
+// declared transliteration system, appended after the main track so the
+// OpenSubsonic v2 response exposes each reading as its own track. Every cue
+// inherits the matching main cue's Start/End (never invents timings), and words
+// lacking a reading for a given system are skipped, so a system's cue array is
+// sparse relative to the base. A system with no readings anywhere yields no
+// track. mainLyrics must already be normalized: it carries one Line per
+// doc.Lines entry and one Cue per word, aligned by index.
+func buildLyricsfilePronunciations(doc lyricsfileDocument, mainLyrics Lyrics) LyricList {
+	if len(doc.Metadata.Transliterations) == 0 {
+		return nil
+	}
+
+	out := make(LyricList, 0, len(doc.Metadata.Transliterations))
+	for _, decl := range doc.Metadata.Transliterations {
+		pronLines := make([]Line, len(mainLyrics.Line))
+		for i := range mainLyrics.Line {
+			mainLine := mainLyrics.Line[i]
+
+			var cues []Cue
+			for j, word := range doc.Lines[i].Words {
+				reading := word.Transliteration[decl.ID]
+				if reading == "" {
+					continue
+				}
+				mainCue := mainLine.Cue[j]
+				cues = append(cues, Cue{
+					Start:     mainCue.Start,
+					End:       mainCue.End,
+					Value:     reading,
+					ByteStart: 0,
+					ByteEnd:   len(reading) - 1,
+				})
+			}
+
+			pronLines[i] = Line{
+				Start: mainLine.Start,
+				End:   mainLine.End,
+				Value: doc.Lines[i].Transliteration[decl.ID],
+				Cue:   cues,
+			}
+		}
+
+		if !hasAnyCue(pronLines) {
+			continue
+		}
+
+		out = append(out, normalizeLyrics(Lyrics{
+			Kind:   LyricKindPronunciation,
+			Lang:   normalizeLyricLang(decl.System),
+			Synced: mainLyrics.Synced,
+			Line:   pronLines,
+		}))
+	}
+	return out
+}
+
+func hasAnyCue(lines []Line) bool {
+	for _, l := range lines {
+		if len(l.Cue) > 0 {
+			return true
+		}
+	}
+	return false
 }
