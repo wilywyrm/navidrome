@@ -1,8 +1,11 @@
 package model
 
 import (
+	"os"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"gopkg.in/yaml.v3"
 )
 
 var _ = Describe("parseLyricsfile", func() {
@@ -296,5 +299,74 @@ lines:
 		Expect(l.Agents).To(BeNil())
 		Expect(l.Line[0].Cue).To(BeNil())
 		Expect(l.Line[1].Cue).To(BeNil())
+	})
+
+	It("decodes transliteration declarations and inline maps from the fixture", func() {
+		content, err := os.ReadFile("model/testdata/ja_transliteration.lyricsfile")
+		Expect(err).ToNot(HaveOccurred())
+
+		var doc lyricsfileDocument
+		Expect(yaml.Unmarshal(content, &doc)).To(Succeed())
+
+		Expect(doc.Metadata.Transliterations).To(HaveLen(2))
+		Expect([]string{
+			doc.Metadata.Transliterations[0].ID,
+			doc.Metadata.Transliterations[1].ID,
+		}).To(ConsistOf("hira", "romaji"))
+		Expect(doc.Metadata.Transliterations[0].System).To(Equal("ja-Hrkt"))
+		Expect(doc.Metadata.Transliterations[1].System).To(Equal("ja-Latn"))
+
+		Expect(doc.Lines).ToNot(BeEmpty())
+		firstLine := doc.Lines[0]
+		Expect(firstLine.Transliteration).To(HaveKeyWithValue("hira", "きょうはてんきがいい"))
+		Expect(firstLine.Transliteration).To(HaveKeyWithValue("romaji", "kyō wa tenki ga ii"))
+
+		kanji := firstLine.Words[0]
+		Expect(kanji.Text).To(Equal("今日"))
+		Expect(kanji.Transliteration["hira"]).ToNot(BeEmpty())
+		Expect(kanji.Transliteration).To(HaveKeyWithValue("romaji", "kyō"))
+
+		kana := firstLine.Words[1]
+		Expect(kana.Text).To(Equal("は"))
+		Expect(kana.Transliteration).ToNot(HaveKey("hira"))
+		Expect(kana.Transliteration).To(HaveKeyWithValue("romaji", "wa"))
+
+		absent := doc.Lines[1].Words[3]
+		Expect(absent.Text).To(Equal("OK"))
+		Expect(absent.Transliteration).To(BeEmpty())
+
+		lyrics, err := parseLyricsfile("ja", content)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(lyrics).To(HaveLen(1))
+	})
+
+	It("decodes legacy v1.0 documents without transliteration fields", func() {
+		input := `version: '1.0'
+metadata:
+  title: 'Legacy Track'
+  artist: 'Old Artist'
+  language: 'eng'
+lines:
+  - text: "Hello world"
+    start_ms: 1000
+    end_ms: 3000
+    words:
+      - text: "Hello "
+        start_ms: 1000
+        end_ms: 1500
+      - text: "world"
+        start_ms: 1500
+        end_ms: 3000
+`
+		var doc lyricsfileDocument
+		Expect(yaml.Unmarshal([]byte(input), &doc)).To(Succeed())
+		Expect(doc.Metadata.Transliterations).To(BeEmpty())
+		Expect(doc.Lines[0].Transliteration).To(BeEmpty())
+		Expect(doc.Lines[0].Words[0].Transliteration).To(BeEmpty())
+		Expect(doc.Lines[0].Words[1].Transliteration).To(BeEmpty())
+
+		lyrics, err := parseLyricsfile("eng", []byte(input))
+		Expect(err).ToNot(HaveOccurred())
+		Expect(lyrics).To(HaveLen(1))
 	})
 })

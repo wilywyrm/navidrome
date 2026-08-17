@@ -78,27 +78,35 @@ type lyricsfileDocument struct {
 	Plain    string                `yaml:"plain"`
 }
 
+type lyricsfileTransliterationDecl struct {
+	ID     string `yaml:"id"`
+	System string `yaml:"system"`
+}
+
 type lyricsfileMetadata struct {
-	Title        string `yaml:"title"`
-	Artist       string `yaml:"artist"`
-	Album        string `yaml:"album"`
-	DurationMs   int64  `yaml:"duration_ms"`
-	OffsetMs     int64  `yaml:"offset_ms"`
-	Language     string `yaml:"language"`
-	Instrumental bool   `yaml:"instrumental"`
+	Title            string                          `yaml:"title"`
+	Artist           string                          `yaml:"artist"`
+	Album            string                          `yaml:"album"`
+	DurationMs       int64                           `yaml:"duration_ms"`
+	OffsetMs         int64                           `yaml:"offset_ms"`
+	Language         string                          `yaml:"language"`
+	Instrumental     bool                            `yaml:"instrumental"`
+	Transliterations []lyricsfileTransliterationDecl `yaml:"transliterations"`
 }
 
 type lyricsfileLineEntry struct {
-	Text    string                `yaml:"text"`
-	StartMs int64                 `yaml:"start_ms"`
-	EndMs   *int64                `yaml:"end_ms"`
-	Words   []lyricsfileWordEntry `yaml:"words"`
+	Text            string                `yaml:"text"`
+	StartMs         int64                 `yaml:"start_ms"`
+	EndMs           *int64                `yaml:"end_ms"`
+	Words           []lyricsfileWordEntry `yaml:"words"`
+	Transliteration map[string]string     `yaml:"transliteration"`
 }
 
 type lyricsfileWordEntry struct {
-	Text    string `yaml:"text"`
-	StartMs int64  `yaml:"start_ms"`
-	EndMs   *int64 `yaml:"end_ms"`
+	Text            string            `yaml:"text"`
+	StartMs         int64             `yaml:"start_ms"`
+	EndMs           *int64            `yaml:"end_ms"`
+	Transliteration map[string]string `yaml:"transliteration"`
 }
 
 // buildLyricsfileLines converts YAML line entries to model.Line entries with
