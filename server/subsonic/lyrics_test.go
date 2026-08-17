@@ -534,6 +534,53 @@ var _ = Describe("GetLyricsBySongId", func() {
 		}))
 	})
 
+	It("should return pronunciation tracks only when enhanced lyrics are requested", func() {
+		lineStart := int64(1000)
+		lineEnd := int64(2000)
+		mf := &model.MediaFile{Artist: "Fallback Artist", Title: "Fallback Title"}
+		lyricsList := model.LyricList{
+			{
+				// A blank kind is the main track (see buildLyricsList).
+				Lang:   "ja",
+				Synced: true,
+				Line:   []model.Line{{Start: &lineStart, End: &lineEnd, Value: "今日"}},
+			},
+			{
+				Kind:   model.LyricKindPronunciation,
+				Lang:   "ja-hrkt",
+				Synced: true,
+				Line:   []model.Line{{Start: &lineStart, End: &lineEnd, Value: "きょう"}},
+			},
+			{
+				Kind:   model.LyricKindPronunciation,
+				Lang:   "ja-latn",
+				Synced: true,
+				Line:   []model.Line{{Start: &lineStart, End: &lineEnd, Value: "kyō"}},
+			},
+		}
+
+		By("collapsing to the single main track when enhanced is false")
+		plain := buildLyricsList(mf, lyricsList, false)
+		Expect(plain.StructuredLyrics).To(HaveLen(1))
+		Expect(plain.StructuredLyrics[0].Lang).To(Equal("ja"))
+		// enhanced=false never annotates kind, so a pronunciation lang cannot leak in.
+		Expect(plain.StructuredLyrics[0].Kind).To(BeEmpty())
+		for _, l := range plain.StructuredLyrics {
+			Expect(l.Lang).ToNot(Equal("ja-hrkt"))
+			Expect(l.Lang).ToNot(Equal("ja-latn"))
+		}
+
+		By("returning every kind-annotated track when enhanced is true")
+		enhanced := buildLyricsList(mf, lyricsList, true)
+		Expect(enhanced.StructuredLyrics).To(HaveLen(3))
+		Expect(enhanced.StructuredLyrics[0].Kind).To(Equal(model.LyricKindMain))
+		Expect(enhanced.StructuredLyrics[0].Lang).To(Equal("ja"))
+		Expect(enhanced.StructuredLyrics[1].Kind).To(Equal(model.LyricKindPronunciation))
+		Expect(enhanced.StructuredLyrics[1].Lang).To(Equal("ja-hrkt"))
+		Expect(enhanced.StructuredLyrics[2].Kind).To(Equal(model.LyricKindPronunciation))
+		Expect(enhanced.StructuredLyrics[2].Lang).To(Equal("ja-latn"))
+	})
+
 	It("should remap cue offsets for interleaved agent cue lines", func() {
 		r := newGetRequest("id=1&enhanced=true")
 
