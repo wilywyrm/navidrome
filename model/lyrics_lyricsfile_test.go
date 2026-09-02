@@ -8,6 +8,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func expectCueBytes(cue Cue, value string, byteStart, byteEnd int, lineValue string) {
+	GinkgoHelper()
+	Expect(cue.Value).To(Equal(value))
+	Expect(cue.ByteStart).To(Equal(byteStart))
+	Expect(cue.ByteEnd).To(Equal(byteEnd))
+	Expect(lineValue[cue.ByteStart : cue.ByteEnd+1]).To(Equal(value))
+}
+
 var _ = Describe("parseLyricsfile", func() {
 	DescribeTable("returns nil,nil for YAML without the Lyricsfile version marker",
 		func(input string) {
@@ -396,20 +404,33 @@ lines:
 		Expect(hira.Line).To(HaveLen(len(main.Line)))
 		Expect(romaji.Line).To(HaveLen(len(main.Line)))
 
+		// Line 0 has authored readings, so offsets address that exact string. hira
+		// is sparse (は carries no reading) so its cues skip the untimed particle
+		// at bytes 9-11 rather than restarting each cue at 0.
 		Expect(hira.Line[0].Value).To(Equal("きょうはてんきがいい"))
-		Expect(romaji.Line[0].Value).To(Equal("kyō wa tenki ga ii"))
-		Expect(hira.Line[1].Value).To(BeEmpty())
-
 		Expect(hira.Line[0].Cue).To(HaveLen(2))
-		Expect(hira.Line[0].Cue[0].Value).To(Equal("きょう"))
-		Expect(hira.Line[0].Cue[1].Value).To(Equal("てんき"))
-		Expect(hira.Line[0].Cue[0].ByteStart).To(Equal(0))
-		Expect(hira.Line[0].Cue[0].ByteEnd).To(Equal(len("きょう") - 1))
+		expectCueBytes(hira.Line[0].Cue[0], "きょう", 0, 8, hira.Line[0].Value)
+		expectCueBytes(hira.Line[0].Cue[1], "てんき", 12, 20, hira.Line[0].Value)
 
+		Expect(romaji.Line[0].Value).To(Equal("kyō wa tenki ga ii"))
 		Expect(romaji.Line[0].Cue).To(HaveLen(5))
-		Expect(romaji.Line[0].Cue[0].Value).To(Equal("kyō"))
-		Expect(romaji.Line[0].Cue[0].ByteStart).To(Equal(0))
-		Expect(romaji.Line[0].Cue[0].ByteEnd).To(Equal(len("kyō") - 1))
+		expectCueBytes(romaji.Line[0].Cue[0], "kyō", 0, 3, romaji.Line[0].Value)
+		expectCueBytes(romaji.Line[0].Cue[1], "wa", 5, 6, romaji.Line[0].Value)
+		expectCueBytes(romaji.Line[0].Cue[2], "tenki", 8, 12, romaji.Line[0].Value)
+		expectCueBytes(romaji.Line[0].Cue[3], "ga", 14, 15, romaji.Line[0].Value)
+		expectCueBytes(romaji.Line[0].Cue[4], "ii", 17, 18, romaji.Line[0].Value)
+
+		// Lines 1-2 omit an authored reading, so the value is rebuilt from the
+		// readings (space-joined) and offsets index into that reconstruction.
+		Expect(hira.Line[1].Value).To(Equal("たべる"))
+		Expect(hira.Line[1].Cue).To(HaveLen(1))
+		expectCueBytes(hira.Line[1].Cue[0], "たべる", 0, 8, hira.Line[1].Value)
+
+		Expect(romaji.Line[1].Value).To(Equal("taberu kōhī wa"))
+		Expect(romaji.Line[1].Cue).To(HaveLen(3))
+		expectCueBytes(romaji.Line[1].Cue[0], "taberu", 0, 5, romaji.Line[1].Value)
+		expectCueBytes(romaji.Line[1].Cue[1], "kōhī", 7, 12, romaji.Line[1].Value)
+		expectCueBytes(romaji.Line[1].Cue[2], "wa", 14, 15, romaji.Line[1].Value)
 
 		// Shared timestamps: hira cue[1] (てんき) maps to the 3rd main word (天気),
 		// proving inheritance follows the word→cue mapping, not positional order.
@@ -426,11 +447,23 @@ lines:
 		Expect(hira.Line[2].End).To(Equal(main.Line[2].End))
 
 		// Sparse: 飛ぶ carries no reading, so neither track emits a cue for it.
+		Expect(hira.Line[2].Value).To(Equal("そら"))
 		Expect(hira.Line[2].Cue).To(HaveLen(1))
-		Expect(hira.Line[2].Cue[0].Value).To(Equal("そら"))
+		expectCueBytes(hira.Line[2].Cue[0], "そら", 0, 5, hira.Line[2].Value)
+		Expect(romaji.Line[2].Value).To(Equal("sora o"))
 		Expect(romaji.Line[2].Cue).To(HaveLen(2))
-		Expect(romaji.Line[2].Cue[0].Value).To(Equal("sora"))
-		Expect(romaji.Line[2].Cue[1].Value).To(Equal("o"))
+		expectCueBytes(romaji.Line[2].Cue[0], "sora", 0, 3, romaji.Line[2].Value)
+		expectCueBytes(romaji.Line[2].Cue[1], "o", 5, 5, romaji.Line[2].Value)
+
+		for _, track := range []Lyrics{hira, romaji} {
+			for _, line := range track.Line {
+				for _, cue := range line.Cue {
+					Expect(cue.ByteStart).To(BeNumerically("<=", cue.ByteEnd))
+					Expect(cue.ByteEnd).To(BeNumerically("<", len(line.Value)))
+					Expect(line.Value[cue.ByteStart : cue.ByteEnd+1]).To(Equal(cue.Value))
+				}
+			}
+		}
 	})
 
 	It("emits only the main track when no transliteration system is declared", func() {

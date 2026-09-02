@@ -314,27 +314,16 @@ func buildLyricsfilePronunciations(doc lyricsfileDocument, mainLyrics Lyrics) Ly
 		pronLines := make([]Line, len(mainLyrics.Line))
 		for i := range mainLyrics.Line {
 			mainLine := mainLyrics.Line[i]
-
-			var cues []Cue
-			for j, word := range doc.Lines[i].Words {
-				reading := word.Transliteration[decl.ID]
-				if reading == "" {
-					continue
-				}
-				mainCue := mainLine.Cue[j]
-				cues = append(cues, Cue{
-					Start:     mainCue.Start,
-					End:       mainCue.End,
-					Value:     reading,
-					ByteStart: 0,
-					ByteEnd:   len(reading) - 1,
-				})
-			}
-
+			value, cues := buildPronunciationLine(
+				doc.Lines[i].Transliteration[decl.ID],
+				doc.Lines[i].Words,
+				mainLine.Cue,
+				decl.ID,
+			)
 			pronLines[i] = Line{
 				Start: mainLine.Start,
 				End:   mainLine.End,
-				Value: doc.Lines[i].Transliteration[decl.ID],
+				Value: value,
 				Cue:   cues,
 			}
 		}
@@ -351,6 +340,81 @@ func buildLyricsfilePronunciations(doc lyricsfileDocument, mainLyrics Lyrics) Ly
 		}))
 	}
 	return out
+}
+
+// buildPronunciationLine assembles one pronunciation line's value and word cues
+// for a single transliteration system. Each cue carries inclusive UTF-8 byte
+// offsets into the returned value, honoring the OpenSubsonic songLyrics v2
+// contract that cue.byteStart/byteEnd address the parent cueLine.value (not the
+// isolated word), so a client recovers the cue text as value[byteStart:byteEnd+1].
+//
+// Offsets are located against the authored line-level reading by scanning
+// forward from the previous cue's end, keeping them monotonic and non-
+// overlapping even when untimed text (e.g. a particle with no reading of its
+// own) sits between two timed readings. When the line omits an authored reading,
+// or its words do not all appear in it verbatim (the Lyricsfile spec only
+// requires words to approximate the line), the value is rebuilt by space-joining
+// the readings so every offset still lands inside it.
+//
+// mainCues is the main track's per-word cue slice (one entry per word, aligned by
+// index); each emitted cue inherits its matching word's Start/End. Words with no
+// reading for this system are skipped, leaving a sparse cue slice.
+func buildPronunciationLine(authored string, words []lyricsfileWordEntry, mainCues []Cue, systemID string) (string, []Cue) {
+	type reading struct {
+		text  string
+		start *int64
+		end   *int64
+	}
+
+	readings := make([]reading, 0, len(words))
+	for j, word := range words {
+		text := word.Transliteration[systemID]
+		if text == "" {
+			continue
+		}
+		readings = append(readings, reading{text: text, start: mainCues[j].Start, end: mainCues[j].End})
+	}
+	if len(readings) == 0 {
+		// No timed readings: expose the authored line value (possibly empty)
+		// without cues so the track stays aligned with the main line count.
+		return authored, nil
+	}
+
+	// Preferred path: address the authored line value, scanning each reading from
+	// the previous cue's end so offsets stay ordered and skip untimed gaps.
+	if authored != "" {
+		cues := make([]Cue, 0, len(readings))
+		cursor := 0
+		matched := true
+		for _, r := range readings {
+			rel := strings.Index(authored[cursor:], r.text)
+			if rel < 0 {
+				matched = false
+				break
+			}
+			start := cursor + rel
+			end := start + len(r.text) - 1
+			cues = append(cues, Cue{Start: r.start, End: r.end, Value: r.text, ByteStart: start, ByteEnd: end})
+			cursor = end + 1
+		}
+		if matched {
+			return authored, cues
+		}
+	}
+
+	// Fallback: rebuild the line from the readings themselves so byte offsets
+	// always land inside the value, space-joining them to preserve word breaks.
+	var b strings.Builder
+	cues := make([]Cue, 0, len(readings))
+	for i, r := range readings {
+		if i > 0 {
+			b.WriteByte(' ')
+		}
+		start := b.Len()
+		b.WriteString(r.text)
+		cues = append(cues, Cue{Start: r.start, End: r.end, Value: r.text, ByteStart: start, ByteEnd: b.Len() - 1})
+	}
+	return b.String(), cues
 }
 
 func hasAnyCue(lines []Line) bool {
